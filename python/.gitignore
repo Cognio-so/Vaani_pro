@@ -43,4 +43,6 @@ Thumbs.db  # Windows thumbnail cache
 .git/
 
 # Environment variables
+.env
+*.env
 .env.*
