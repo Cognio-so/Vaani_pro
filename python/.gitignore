@@ -1,6 +1,7 @@
 # Virtual environment
 venv/
-.env/
+.env
+*.env  # Ignore any .env files
 
 # Python cache
 __pycache__/
@@ -28,10 +29,15 @@ wheels/
 # IDE specific files
 .vscode/
 .idea/
+*.iml  # Ignore JetBrains project files
 
 # Logs
 *.log
 logs/
 
 # Misc
-.DS_Store 
+.DS_Store
+Thumbs.db  # Windows thumbnail cache
+
+# Git
+.git/
