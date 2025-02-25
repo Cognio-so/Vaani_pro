@@ -1,4 +1,4 @@
-**# Audio-Smith
+# Audio-Smith
 
 ## Overview
 Audio-Smith is a web application that allows users to interact with multiple AI models seamlessly. It consists of three main components:
