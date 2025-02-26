@@ -7,7 +7,7 @@ const Navbar = () => {
       <div className="flex items-center">
         <Link to="/" className="flex items-center text-white font-bold text-xl">
           <img src="/vannipro.png" alt="Vaanipro" className="w-12 h-12 mr-2" />
-          <span>Vaanipro</span>
+          <span>Vaani.pro</span>
         </Link>
       </div>
       <nav className="hidden md:block">

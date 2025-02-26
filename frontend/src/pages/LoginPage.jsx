@@ -53,8 +53,8 @@ export default function LoginForm() {
         
         {/* Logo Overlay */}
         <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
-          <img src="/vannipro.png" alt="Vaani.pro Logo" className="w-32 h-32" />
-          <h1 className="text-[#cc2b5e] text-2xl font-bold mt-2">Vaani Pro</h1>
+          <img src="/vannipro.png" alt="Vaani.pro Logo" className="w-44 h-30" />
+          <h1 className="text-[#cc2b5e] text-2xl font-bold mt-2">Vaani.pro</h1>
         </div>
       </div>
 
