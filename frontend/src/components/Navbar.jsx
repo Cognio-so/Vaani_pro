@@ -6,7 +6,7 @@ const Navbar = () => {
     <header className="container mx-auto px-4 py-6 flex justify-between items-center relative z-10">
       <div className="flex items-center">
         <Link to="/" className="flex items-center text-white font-bold text-xl">
-          <img src="/vannipro.png" alt="Vaanipro" className="w-12 h-12 mr-2" />
+          <img src="/vannipro.png" alt="Vaanipro" className="w-16 h-12 mr-2" />
           <span>Vaani.pro</span>
         </Link>
       </div>
