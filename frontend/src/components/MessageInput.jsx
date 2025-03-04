@@ -24,13 +24,11 @@ function MessageInput({ onSendMessage, isLoading }) {
   const [isMuted, setIsMuted] = useState(false);
   const stopRef = useRef(null);
   const [showModelSelector, setShowModelSelector] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("gemini-pro");
+  const [selectedModel, setSelectedModel] = useState("gemini-1.5-flash");
   const [models, setModels] = useState([
-    { id: "gemini-pro", name: "Gemini Pro", cost: "Cheapest" },
-    { id: "gpt-3.5-turbo", name: "GPT-3.5", cost: "Low" },
-    { id: "claude-3-haiku", name: "Claude Haiku", cost: "Low" },
-    { id: "llama-v2-7b", name: "Llama2 7B", cost: "Free" },
-    { id: "mixtral-8x7b", name: "Mixtral 8x7B", cost: "Low" }
+    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", cost: "Free/Cheap" },
+    { id: "gpt-4o-mini", name: "GPT-4o-mini", cost: "Low" }, // Kept as is, cheap
+    { id: "claude-3-haiku-20240307", name: "Claude 3 Haiku", cost: "Free/Cheap" },
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAISpeaking, setIsAISpeaking] = useState(false);
@@ -218,104 +216,113 @@ function MessageInput({ onSendMessage, isLoading }) {
       console.error('Error closing voice interaction:', error);
     }
   };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!message.trim() || isSubmitting) {
-        return;
+      return;
     }
-
+  
     const requestId = Date.now();
     const currentMessage = message.trim();
-
+  
     cancelCurrentRequest();
     
     try {
-        setIsSubmitting(true);
-        setMessage('');
-        onSendMessage(currentMessage, "user");
-
-        abortControllerRef.current = new AbortController();
-        currentRequestRef.current = requestId;
-
-        stopSpeaking();
-
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${PYTHON_API_URL}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-                'X-Session-ID': sessionId,
-                'X-Request-ID': requestId.toString(),
-                'X-Cancel-Previous': 'true'
-            },
-            body: JSON.stringify({
-                message: currentMessage,
-                model: selectedModel
-            }),
-            signal: abortControllerRef.current.signal
-        });
-
-        if (!response.ok) {
-            throw new Error(`Server responded with status ${response.status}`);
-        }
-
-        // Handle streaming response
-        const reader = response.body.getReader();
-        let accumulatedResponse = '';
-
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                
-                if (done) break;
-                
-                // Decode the chunk
-                const chunk = new TextDecoder().decode(value);
-                const lines = chunk.split('\n');
-                
-                // Process each line
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        
-                        if (data === '[DONE]') {
-                            break;
-                        }
-                        
-                        try {
-                            accumulatedResponse += data;
-                            if (currentRequestRef.current === requestId) {
-                                onSendMessage(accumulatedResponse, "assistant", true);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing chunk:', e);
-                        }
-                    }
+      setIsSubmitting(true);
+      setMessage('');
+      onSendMessage(currentMessage, "user");
+  
+      abortControllerRef.current = new AbortController();
+      currentRequestRef.current = requestId;
+  
+      stopSpeaking();
+  
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${PYTHON_API_URL}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': sessionId,
+          'X-Request-ID': requestId.toString(),
+          'X-Cancel-Previous': 'true'
+        },
+        body: JSON.stringify({
+          message: currentMessage,
+          model: selectedModel
+        }),
+        signal: abortControllerRef.current.signal
+      });
+  
+      if (!response.ok) {
+        throw new Error(`Server responded with status ${response.status}`);
+      }
+  
+      // Handle streaming response with real-time updates
+      const reader = response.body.getReader();
+      let accumulatedResponse = ""; // Buffer for the current assistant message
+      let hasStartedStreaming = false; // Track if streaming has begun
+  
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            // Stream is complete; finalize and save
+            if (currentRequestRef.current === requestId && accumulatedResponse.trim() && hasStartedStreaming) {
+              onSendMessage(accumulatedResponse.trim(), "assistant", false); // Finalize and trigger save
+            }
+            break;
+          }
+  
+          const chunkText = new TextDecoder().decode(value);
+          const lines = chunkText.split('\n').filter(line => line.trim());
+  
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const jsonData = line.substring(6); // Remove "data: "
+              if (jsonData === "[DONE]") {
+                // Handled in done case above
+              } else {
+                try {
+                  let parsedData;
+                  try {
+                    parsedData = JSON.parse(jsonData);
+                  } catch {
+                    parsedData = jsonData; // Fallback to raw string if not JSON
+                  }
+                  accumulatedResponse += parsedData; // Append new chunk
+  
+                  if (currentRequestRef.current === requestId) {
+                    onSendMessage(accumulatedResponse, "assistant", true); // Streaming update
+                    hasStartedStreaming = true; // Mark streaming has started
+                  }
+                } catch (parseError) {
+                  console.error("Error parsing JSON:", parseError);
                 }
+              }
             }
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.log('Stream aborted:', error);
-            } else {
-                throw error;
-            }
+          }
         }
-
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('Stream aborted:', error);
+        } else {
+          throw error;
+        }
+      }
+  
     } catch (error) {
-        if (error.name !== 'AbortError') {
-            onSendMessage(`Error: ${error.message}`, "system");
-        }
+      if (error.name !== 'AbortError') {
+        onSendMessage(`Error: ${error.message}`, "system");
+      }
     } finally {
-        if (currentRequestRef.current === requestId) {
-            setIsSubmitting(false);
-            abortControllerRef.current = null;
-        }
+      if (currentRequestRef.current === requestId) {
+        setIsSubmitting(false);
+        abortControllerRef.current = null;
+      }
     }
   };
-
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -351,16 +358,12 @@ function MessageInput({ onSendMessage, isLoading }) {
 
   const getModelIcon = (modelId) => {
     switch (modelId) {
-      case "gemini-pro":
+      case "gemini-1.5-flash":
         return <TbBrandGoogleFilled className="h-4 w-4 text-[#cc2b5e]" />;
-      case "gpt-3.5-turbo":
+      case "gpt-4o-mini":
         return <SiOpenai className="h-4 w-4 text-[#cc2b5e]" />;
-      case "claude-3-haiku":
+      case "claude-3-haiku-20240307":
         return <TbBrain className="h-4 w-4 text-[#cc2b5e]" />;
-      case "llama-v2-7b":
-        return <SiClarifai className="h-4 w-4 text-[#cc2b5e]" />;
-      case "mixtral-8x7b":
-        return <HiSparkles className="h-4 w-4 text-[#cc2b5e]" />;
       default:
         return <HiSparkles className="h-4 w-4 text-[#cc2b5e]" />;
     }
@@ -397,6 +400,37 @@ function MessageInput({ onSendMessage, isLoading }) {
       localStorage.setItem('chatSessionId', newSessionId);
     }
   }, [sessionId]);
+
+  const availableModels = [
+    {
+      name: "gpt-4o-mini",
+      label: "GPT-4o-mini",
+      description: "OpenAI's latest flagship model, optimized for speed.",
+      icon: <SiOpenai size={18} />,
+      cost: "$0.005/1K",
+    },
+    {
+      name: "gemini-flash-2.0",
+      label: "Gemini Flash 2.0",
+      description: "Google's lightweight model, balanced for performance and cost.",
+      icon: <TbBrandGoogleFilled size={18} />,
+      cost: "$0.0005/1K",
+    },
+    {
+      name: "claude-3.5-haiku",
+      label: "Claude 3.5 Haiku",
+      description: "Anthropic's fastest and most cost-effective model.",
+      icon: <SiClarifai size={18} />,
+      cost: "$0.0003/1K",
+    },
+      {
+        name: "llama-3.3",
+        label: "Llama 3.3",
+        description: "Meta's open-source model, great for research and customization.",
+        icon: <TbBrain size={18} />,
+        cost: "$0.0002/1K",
+      }
+  ];
 
   return (
     <>
@@ -524,7 +558,7 @@ function MessageInput({ onSendMessage, isLoading }) {
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="absolute bottom-full left-0 mb-2 w-[280px] sm:w-[350px] bg-white/10 backdrop-blur-md rounded-xl p-1.5 border border-white/10 z-50"
+                className="absolute bottom-full left-0 mb-2 w-[280px] sm:w-[350px] bg-black/10 backdrop-blur-xl rounded-xl p-1.5 border border-white/10 z-50"
               >
                 <div className="grid grid-cols-3 gap-1.5">
                   {models.map((model) => (
@@ -535,7 +569,7 @@ function MessageInput({ onSendMessage, isLoading }) {
                         setShowModelSelector(false);
                       }}
                       className={`p-1.5 rounded-lg text-white/80 hover:bg-white/10 transition-all duration-200 flex flex-col items-center justify-center gap-0.5 ${
-                        selectedModel === model.id ? 'bg-white/20' : ''
+                        selectedModel === model.id ? 'bg-white/30' : ''
                       }`}
                     >
                       {getModelIcon(model.id)}

@@ -53,37 +53,22 @@ def get_or_create_memory(session_id):
     return conversation_memories[session_id]
 
 def get_model_instance(model_name):
-    if model_name.startswith("gemini"):
-        return genai.GenerativeModel('gemini-pro')
-    elif model_name.startswith("gpt"):
+    if model_name == "gemini-1.5-flash":
+        return genai.GenerativeModel('gemini-1.5-flash')  # Updated to cheapest Gemini
+    elif model_name == "gpt-4o-mini":
         return openai_client
-    elif model_name.startswith("claude"):
+    elif model_name == "claude-3-haiku-20240307":
         return claude_client
-    elif model_name.startswith("fireworks"):
+    elif model_name == "llama-v3p1-8b-instruct":
         return fireworks
-    elif model_name.startswith("groq"):
-        return groq_client
     else:
         raise ValueError(f"Unsupported model: {model_name}")
 
 async def generate_response(messages, model_name, session_id=None):
     try:
-        logger.info(f"Generating response with model {model_name} for session {session_id}")
-        
+        logger.info(f"Generating response with model: {model_name}, session_id: {session_id}")
         model = get_model_instance(model_name)
-        memory = get_or_create_memory(session_id) if session_id else None
-
-        # If we have memory, add previous conversation context
-        if memory and memory.chat_memory.messages:
-            context_messages = []
-            for msg in memory.chat_memory.messages[-4:]:  # Last 4 messages for context
-                if isinstance(msg, HumanMessage):
-                    context_messages.append({"role": "user", "content": msg.content})
-                elif isinstance(msg, AIMessage):
-                    context_messages.append({"role": "assistant", "content": msg.content})
-            messages = context_messages + messages
-
-        # Extract language from system message
+        memory = get_or_create_memory(session_id)
         language = 'en-US'
         for msg in messages:
             if msg['role'] == 'system':
@@ -91,9 +76,11 @@ async def generate_response(messages, model_name, session_id=None):
                     language = msg['content'].split('Respond in')[1].split('.')[0].strip()
                     break
 
-        # Enhanced language handling for different models
-        if model_name.startswith("gemini"):
-            # Create a more specific prompt for language handling
+        buffer = ""
+        MIN_CHUNK_SIZE = 50
+        PUNCTUATION_MARKS = ['.', '!', '?', '\n']
+        
+        if model_name == "gemini-1.5-flash":
             prompt = f"You must respond in {language}. Maintain the same language throughout the response. "
             if 'hi' in language.lower():
                 prompt += "Use Hindi script (Devanagari) for Hindi responses. "
@@ -113,8 +100,7 @@ async def generate_response(messages, model_name, session_id=None):
                 memory.chat_memory.add_ai_message(response.text)
             yield response.text
 
-        elif model_name.startswith("gpt"):
-            # Add language instruction to system message
+        elif model_name == "gpt-4o-mini":
             lang_message = {
                 "role": "system",
                 "content": f"You must respond in {language}. If the user speaks in Hindi, respond in Hindi using Devanagari script. Maintain consistent language throughout."
@@ -126,43 +112,48 @@ async def generate_response(messages, model_name, session_id=None):
                 messages=messages,
                 stream=True
             )
+
             async for chunk in response:
                 if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                    buffer += chunk.choices[0].delta.content
+                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                        yield buffer
+                        buffer = ""
+            if buffer.strip():
+                yield buffer
 
-        elif model_name.startswith("claude"):
-            # Create the prompt for Claude
+        elif model_name == "claude-3-haiku-20240307":
             response = await model.messages.create(
-                model=model_name,
+                model="claude-3-haiku-20240307",  # Explicitly use this cheaper model
                 messages=messages,
                 max_tokens=1000,
                 stream=True
             )
+            
             async for chunk in response:
-                if chunk.content:
-                    yield chunk.content
+                if hasattr(chunk, 'delta') and chunk.delta.text:
+                    buffer += chunk.delta.text
+                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                        yield buffer
+                        buffer = ""
+            if buffer.strip():
+                yield buffer
 
-        elif model_name.startswith("fireworks"):
-            # Create the prompt for Fireworks
+        elif model_name == "llama-v3p1-8b-instruct":
             response = model.ChatCompletion.create(
-                model=model_name,
+                model="accounts/fireworks/models/llama-v3p1-8b-instruct",  # Full Fireworks model path
                 messages=messages,
                 stream=True
             )
+            
             async for chunk in response:
                 if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-
-        elif model_name.startswith("groq"):
-            # Create the prompt for Groq
-            response = model.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                stream=True
-            )
-            async for chunk in response:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                    buffer += chunk.choices[0].delta.content
+                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                        yield buffer
+                        buffer = ""
+            if buffer.strip():
+                yield buffer
 
         else:
             raise ValueError(f"Unsupported model: {model_name}")
@@ -171,6 +162,7 @@ async def generate_response(messages, model_name, session_id=None):
         logger.error(f"Error generating response: {str(e)}")
         yield f"I apologize, but I encountered an error: {str(e)}"
 
+        
 async def generate_related_questions(message: str, model_name: str) -> list:
     try:
         model = get_model_instance(model_name)

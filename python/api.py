@@ -63,17 +63,17 @@ async def chat_endpoint(request: Request, session_id: str = Depends(get_session_
 
         body = await request.json()
         message = body.get('message', '').strip()
-        model = body.get('model', 'gemini-pro').strip()
-        
-        # Map model names to their cheaper versions
+        model = body.get('model', 'gemini-1.5-flash').strip()
+
+        # Map model names to their backend versions
         model_mapping = {
-            'gpt-4': 'gpt-3.5-turbo',
-            'claude-3-opus': 'claude-3-haiku',
-            'llama-70b': 'llama-v2-7b',
-            'mixtral-8x7b-instruct': 'mixtral-8x7b'
+            'gpt-4o-mini': 'gpt-4o-mini',
+            'gemini-1.5-flash': 'gemini-1.5-flash',
+            'claude-3-haiku-20240307': 'claude-3-haiku-20240307',
+            'llama-v3p1-8b-instruct': 'llama-v3p1-8b-instruct',
         }
-        
-        model = model_mapping.get(model, model)
+
+        model = model_mapping.get(model, model)  # Get the mapped model, or the original if not found
         request_id = request.headers.get('X-Request-ID')
 
         sessions[session_id]['current_request'] = request_id
@@ -87,39 +87,26 @@ async def chat_endpoint(request: Request, session_id: str = Depends(get_session_
             {"role": "user", "content": message}
         ]
 
-        # Use StreamingResponse instead of mixing yield and return
-        async def response_generator():
+        # Stream the response
+        async def generate():
             try:
-                full_response = ""
-                async for chunk in generate_response(messages, model, session_id):
+                async for text in generate_response(messages, model, session_id):
                     if sessions[session_id].get('cancelled', False):
-                        logger.info(f"Request {request_id} was cancelled")
                         break
-                    
-                    # Only send the new chunk, not the accumulated response
-                    if chunk:
-                        yield f"data: {chunk}\n\n"
-                
-                # Send DONE marker only once at the end
+                    # Format the response as a proper SSE data chunk
+                    yield f"data: {text}\n\n"
                 yield "data: [DONE]\n\n"
             except Exception as e:
-                logger.error(f"Error generating response: {str(e)}")
+                logger.error(f"Error in generate: {str(e)}")
                 yield f"data: Error: {str(e)}\n\n"
-                yield "data: [DONE]\n\n"
 
         return StreamingResponse(
-            response_generator(),
-            media_type='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-                'Content-Type': 'text/event-stream',
-                'X-Accel-Buffering': 'no'
-            }
+            generate(),
+            media_type="text/event-stream"
         )
 
     except Exception as e:
-        logger.error(f"Chat error: {str(e)}")
+        logger.error(f"Chat endpoint error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/voice-chat")

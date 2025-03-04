@@ -7,6 +7,10 @@ import { HiSparkles } from "react-icons/hi"
 import { speakWithDeepgram, stopSpeaking } from '../utils/textToSpeech'
 import { sendEmailWithPDF } from '../utils/emailService'
 import { useAuth } from '../context/AuthContext'
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
+import { FaRegCopy } from "react-icons/fa"
+import { LuCopyCheck } from "react-icons/lu"
 
 function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onUpdateMessages }) {
   const { user } = useAuth()
@@ -22,6 +26,7 @@ function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onU
   const saveInProgress = useRef(false)
   const pendingMessages = useRef([])
   const chatIdRef = useRef(null)
+  const [copyStatus, setCopyStatus] = useState({})
 
   // Initialize messages when activeChat changes
   useEffect(() => {
@@ -309,30 +314,39 @@ function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onU
   }, [messages, onUpdateMessages]);
 
   // Update the addMessage function
-  const addMessage = async (content, role) => {
+  const addMessage = async (content, role, isStreaming = false) => {
     if (!chatIdRef.current) return;
-
+  
     const newMessage = {
       content,
       role,
       timestamp: new Date().toISOString()
     };
-
+  
     setMessages(prevMessages => {
-      const updatedMessages = [...prevMessages, newMessage];
-      
-      // Only save after AI response is received
-      if (role === 'assistant') {
+      let updatedMessages;
+      if (role === 'assistant' && prevMessages.length > 0 && prevMessages[prevMessages.length - 1].role === 'assistant' && (isStreaming || !isStreaming)) {
+        // Update the last assistant message, whether streaming or finalizing
+        updatedMessages = [...prevMessages];
+        updatedMessages[updatedMessages.length - 1] = newMessage;
+      } else {
+        // Add new message (for user or first assistant message)
+        updatedMessages = [...prevMessages, newMessage];
+      }
+  
+      // Save after AI response when stream is complete (non-streaming call)
+      if (role === 'assistant' && !isStreaming) {
         saveMessages(updatedMessages);
       }
       
       return updatedMessages;
     });
-
+  
     if (role === "user") {
       setIsFirstMessage(false);
       setIsLoading(true);
     } else if (role === "assistant") {
+      // Clear loading state when assistant response is received
       setIsLoading(false);
     }
   };
@@ -348,58 +362,111 @@ function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onU
     stopSpeaking();
   };
 
-  const renderMessage = (message, index) => (
-    <motion.div
-      key={`${message.role}-${index}`}
-      initial="hidden"
-      animate="visible"
-      variants={messageVariants}
-      className={`flex items-start gap-3 ${
-        message.role === "user" ? "justify-end" : "justify-start"
-      }`}
-    >
-      {message.role !== "user" && (
-        <motion.div
-          className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-[#cc2b5e] to-[#753a88] flex items-center justify-center border border-white/10 shadow-lg"
-          whileHover={{ scale: 1.05 }}
-        >
-          <HiSparkles className="w-4 h-4 text-white" />
-        </motion.div>
-      )}
+  const copyToClipboard = (content, messageId) => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopyStatus(prev => ({ ...prev, [messageId]: true }));
+      setTimeout(() => setCopyStatus(prev => ({ ...prev, [messageId]: false })), 2000);
+    });
+  };
 
-      <div className={`max-w-[70%] px-4 py-3 rounded-2xl shadow-lg ${
-        message.role === "user" 
-          ? "bg-gradient-to-br from-[#1a1a1a] to-[#2a2a2a] text-white/90 border border-white/10" 
-          : "bg-[#1a1a1a] text-slate-200 border border-white/10"
-      }`}>
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.1 }}
-          className="relative"
-        >
-          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-            {message.content}
-            {message.isTyping && (
-              <motion.span
-                animate={{ opacity: [0, 1] }}
-                transition={{ duration: 0.5, repeat: Infinity }}
-                className="inline-block ml-1 text-[#FAAE7B]"
-              >
-                ▋
-              </motion.span>
+  const renderMessage = (message, index) => {
+    // Add voice message indicator and styling
+    return (
+      <motion.div
+        key={message.messageId}
+        initial="hidden"
+        animate="visible"
+        variants={messageVariants}
+        className={`flex items-start gap-3 mb-8 ${
+          message.role === "user" ? "justify-end" : "justify-start"
+        }`}
+      >
+        {message.role !== "user" && (
+          <motion.div
+            className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-[#cc2b5e] to-[#753a88] flex items-center justify-center border border-white/10 shadow-lg"
+            whileHover={{ scale: 1.05 }}
+          >
+            {/* Show different icon for voice messages */}
+            {message.isVoice ? (
+              <BsChatLeftText className="w-4 h-4 text-white" />
+            ) : (
+              <HiSparkles className="w-4 h-4 text-white" />
             )}
-          </p>
-        </motion.div>
-      </div>
+          </motion.div>
+        )}
 
-      {message.role === "user" && (
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center border border-white/10 shadow-lg">
-          <FiUser className="w-4 h-4 text-[#FAAE7B]" />
+        <div
+          className={`max-w-[85%] sm:max-w-[75%] px-3 sm:px-4 py-2 sm:py-3 rounded-2xl shadow-lg ${
+            message.role === "user"
+              ? "bg-gradient-to-br from-[#1a1a1a] to-[#2a2a2a] text-white/90 border border-white/10"
+              : `bg-[#1a1a1a] text-slate-200 border border-white/10 ${
+                  message.isVoice ? 'voice-message' : ''
+                }`
+          }`}
+        >
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.1 }}
+            className="relative"
+          >
+            {/* Add voice message indicator if it's a voice message */}
+            {message.isVoice && (
+              <div className="text-xs text-[#cc2b5e] mb-1">🎤 Voice Message</div>
+            )}
+            
+            {/* Rest of the message content rendering */}
+            <div style={{ overflowX: "auto", width: "100%" }}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  table: ({ node, ...props }) => <table style={{ width: '100%', borderCollapse: 'collapse' }} {...props} />,
+                  thead: ({ node, ...props }) => <thead style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)' }} {...props} />,
+                  tr: ({ node, ...props }) => <tr style={{ backgroundColor: node.index % 2 === 0 ? 'rgba(255, 255, 255, 0.05)' : 'inherit' }} {...props} />,
+                  th: ({ node, ...props }) => <th style={{ border: '1px solid rgba(255, 255, 255, 0.2)', padding: '8px', textAlign: 'left' }} {...props} />,
+                  td: ({ node, ...props }) => <td style={{ border: '1px solid rgba(255, 255, 255, 0.2)', padding: '8px', textAlign: 'left' }} {...props} />,
+                  h1: ({ node, ...props }) => <h1 style={{ fontSize: '1.5em', fontWeight: 'bold' }} {...props} />,
+                  h2: ({ node, ...props }) => <h2 style={{ fontSize: '1.25em', fontWeight: 'bold' }} {...props} />,
+                  h3: ({ node, ...props }) => <h3 style={{ fontSize: '1.1em', fontWeight: 'bold' }} {...props} />,
+                  code: ({ node, inline, ...props }) => {
+                    const content = String(props.children).trim();
+                    return inline ? (
+                      <code {...props} />
+                    ) : (
+                      <pre {...props} style={{ position: 'relative' }}>
+                        <button
+                          onClick={() => copyToClipboard(content, message.messageId)}
+                          className="absolute top-1 right-1 text-xs text-white bg-gray-700 rounded px-2 py-1 hover:bg-gray-600"
+                        >
+                          {copyStatus[message.messageId] ? <LuCopyCheck /> : <FaRegCopy />}
+                        </button>
+                        <code>{content}</code>
+                      </pre>
+                    );
+                  },
+                  ul: ({ node, ...props }) => <ul {...props} />,
+                  ol: ({ node, ...props }) => <ol {...props} />,
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          </motion.div>
         </div>
-      )}
-    </motion.div>
-  )
+
+        {message.role === "user" && (
+          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center border border-white/10 shadow-lg">
+            {/* Show different icon for user voice messages */}
+            {message.isVoice ? (
+              <BsChatLeftText className="w-4 h-4 text-[#FAAE7B]" />
+            ) : (
+              <FiUser className="w-4 h-4 text-[#FAAE7B]" />
+            )}
+          </div>
+        )}
+      </motion.div>
+    );
+  };
 
   // Add loading skeleton component
   const LoadingSkeleton = () => (
@@ -474,58 +541,7 @@ function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onU
           <LoadingSkeleton />
         ) : (
           <>
-            {messages.map((message, index) => (
-              <motion.div
-                key={`${message.role}-${index}`}
-                initial="hidden"
-                animate="visible"
-                variants={messageVariants}
-                className={`flex items-start gap-2 sm:gap-3 ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                {message.role !== "user" && (
-                  <motion.div
-                    className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-[#cc2b5e] to-[#753a88] flex items-center justify-center border border-white/10 shadow-lg"
-                    whileHover={{ scale: 1.05 }}
-                  >
-                    <HiSparkles className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
-                  </motion.div>
-                )}
-
-                <div className={`max-w-[75%] sm:max-w-[70%] px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl shadow-lg ${
-                  message.role === "user" 
-                    ? "bg-gradient-to-br from-[#1a1a1a] to-[#2a2a2a] text-white/90 border border-white/10" 
-                    : "bg-[#1a1a1a] text-slate-200 border border-white/10"
-                }`}>
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.1 }}
-                    className="relative"
-                  >
-                    <p className="whitespace-pre-wrap break-words text-xs sm:text-sm leading-relaxed">
-                      {message.content}
-                      {message.isTyping && (
-                        <motion.span
-                          animate={{ opacity: [0, 1] }}
-                          transition={{ duration: 0.5, repeat: Infinity }}
-                          className="inline-block ml-1 text-[#FAAE7B]"
-                        >
-                          ▋
-                        </motion.span>
-                      )}
-                    </p>
-                  </motion.div>
-                </div>
-
-                {message.role === "user" && (
-                  <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center border border-white/10 shadow-lg">
-                    <FiUser className="w-3 h-3 sm:w-4 sm:h-4 text-[#FAAE7B]" />
-                  </div>
-                )}
-              </motion.div>
-            ))}
+            {messages.map((message, index) => renderMessage(message, index))}
             
             {isLoading && (
               <motion.div
@@ -562,6 +578,12 @@ function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onU
       <div className={`w-full ${isFirstMessage ? 'absolute top-1/2 -translate-y-1/2' : 'relative'}`}>
         {isFirstMessage && (
           <div className="px-4 py-6">
+            {/* Added Welcome Message */}
+            <div className="text-center mb-6">
+              <h1 className="text-3xl font-bold text-[#cc2b5e]">Welcome to Vaani.pro</h1>
+              <p className="text-gray-400 text-xl mt-2">How may I help you today?</p>
+            </div>
+            {/* Predefined Prompts */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-3xl mx-auto">
               {predefinedPrompts.map((item) => (
                 <motion.div
@@ -605,12 +627,10 @@ function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onU
 
                   {/* Content with enhanced hover effects */}
                   <div className="relative z-10">
-                    <h3 className="text-white/90 font-medium text-sm mb-2  "
-                    >
+                    <h3 className="text-white/90 font-medium text-sm mb-2">
                       {item.title}
                     </h3>
-                    <p className="text-gray-400 text-xs line-clamp-2 "
-                    >
+                    <p className="text-gray-400 text-xs line-clamp-2">
                       {item.prompt}
                     </p>
                   </div>
@@ -635,4 +655,3 @@ function ChatContainer({ activeChat, onUpdateChatTitle, isOpen, onChatSaved, onU
 }
 
 export default ChatContainer;
-
